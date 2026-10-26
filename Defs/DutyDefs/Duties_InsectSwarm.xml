@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!-- Insects following a swarm point (LordToil_InsectSwarm). focus: a reachable cell near the point to move to;
+       focusSecond: the point itself; radius: how far from the point they fight. -->
+  <DutyDef>
+    <defName>TKS_InsectSwarm</defName>
+    <thinkNode Class="ThinkNode_Priority">
+      <subNodes>
+        <li Class="TKS_InsectsArentRaiders.JobGiver_InsectSwarmFight">
+          <needLOSToAcquireNonPawnTargets>true</needLOSToAcquireNonPawnTargets>
+          <targetAcquireRadius>20</targetAcquireRadius>
+          <targetKeepRadius>25</targetKeepRadius>
+          <chaseTarget>false</chaseTarget>
+        </li>
+        <li Class="TKS_InsectsArentRaiders.JobGiver_InsectSwarmAttackBuilding" />
+        <li Class="ThinkNode_Tagger">
+          <tagToGive>SatisfyingNeeds</tagToGive>
+          <subNodes>
+            <li Class="JobGiver_GetFood" />
+          </subNodes>
+        </li>
+        <li Class="JobGiver_GotoTravelDestination">
+          <locomotionUrgency>Jog</locomotionUrgency>
+          <wanderOnArrival>false</wanderOnArrival>
+        </li>
+        <li Class="JobGiver_WanderNearDutyLocation">
+          <wanderRadius>5</wanderRadius>
+          <locomotionUrgency>Jog</locomotionUrgency>
+        </li>
+      </subNodes>
+    </thinkNode>
+  </DutyDef>
+
+</Defs>

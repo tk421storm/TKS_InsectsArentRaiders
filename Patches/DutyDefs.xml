@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Patch>
+
+  <!-- Aggressive hive defense: patrol up to 35 cells from the hive (vanilla 7.5; the leash is 40) and jog instead of walk
+       (twice as fast; vanilla attack jobs already jog) -->
+  <Operation Class="PatchOperationAdd">
+    <xpath>Defs/DutyDef[defName="DefendHiveAggressively"]/thinkNode/subNodes/li[@Class="JobGiver_WanderHive"]</xpath>
+    <value>
+      <wanderRadius>35</wanderRadius>
+      <locomotionUrgency>Jog</locomotionUrgency>
+    </value>
+  </Operation>
+
+</Patch>

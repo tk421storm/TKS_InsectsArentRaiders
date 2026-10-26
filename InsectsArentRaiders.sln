@@ -1,0 +1,19 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36203.30 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InsectsArentRaiders", "InsectsArentRaiders.csproj", "{DAFA551E-B275-4353-B0E5-E03B3B70D5FA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		1.6|Any CPU = 1.6|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DAFA551E-B275-4353-B0E5-E03B3B70D5FA}.1.6|Any CPU.ActiveCfg = 1.6|Any CPU
+		{DAFA551E-B275-4353-B0E5-E03B3B70D5FA}.1.6|Any CPU.Build.0 = 1.6|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
