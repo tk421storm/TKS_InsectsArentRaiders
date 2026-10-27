@@ -20,10 +20,7 @@
             <li Class="JobGiver_GetFood" />
           </subNodes>
         </li>
-        <li Class="JobGiver_GotoTravelDestination">
-          <locomotionUrgency>Jog</locomotionUrgency>
-          <wanderOnArrival>false</wanderOnArrival>
-        </li>
+        <li Class="TKS_InsectsArentRaiders.JobGiver_InsectSwarmFollow" />
         <li Class="JobGiver_WanderNearDutyLocation">
           <wanderRadius>5</wanderRadius>
           <locomotionUrgency>Jog</locomotionUrgency>

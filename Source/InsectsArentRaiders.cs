@@ -55,6 +55,11 @@ namespace TKS_InsectsArentRaiders
         // The hive toils keep each insect's assigned hive in their toil data, which stays put while the lord is assaulting
         public static Hive AnySpawnedHive(Lord lord)
         {
+            return SpawnedHives(lord).FirstOrDefault();
+        }
+
+        public static IEnumerable<Hive> SpawnedHives(Lord lord)
+        {
             foreach (LordToil toil in lord.Graph.lordToils)
             {
                 if (toil.data is LordToil_HiveRelatedData data)
@@ -63,12 +68,11 @@ namespace TKS_InsectsArentRaiders
                     {
                         if (hive != null && hive.Spawned)
                         {
-                            return hive;
+                            yield return hive;
                         }
                     }
                 }
             }
-            return null;
         }
 
         // Duties this mod gives to hiveless insects focus on a cell; vanilla hive duties always focus on the hive itself
@@ -223,7 +227,10 @@ namespace TKS_InsectsArentRaiders
             __result.AddTransition(toSwarm);
             Transition swarmDone = new Transition(swarm, calm);
             swarmDone.AddTrigger(new Trigger_Memo(LordToil_InsectSwarm.MemoNoTarget));
-            swarmDone.AddTrigger(new Trigger_TicksPassedWithoutHarmOrMemos(1200, Hive.MemoAttackedByEnemy, Hive.MemoBurnedBadly, Hive.MemoDestroyedNonRoofCollapse, Hive.MemoDeSpawned, HediffGiver_Heat.MemoPawnBurnedByAir));
+            // home after QuietTicks without any of the swarm's insects being harmed (from anyone; the insects' own attacks
+            // don't count) or a hive memo. Restarts whenever the swarm starts. Vanilla's assault uses 1200, too short
+            // for a swarm walking to a far cell.
+            swarmDone.AddTrigger(new Trigger_TicksPassedWithoutHarmOrMemos(LordToil_InsectSwarm.QuietTicks, Hive.MemoAttackedByEnemy, Hive.MemoBurnedBadly, Hive.MemoDestroyedNonRoofCollapse, Hive.MemoDeSpawned, HediffGiver_Heat.MemoPawnBurnedByAir));
             swarmDone.AddPostAction(new TransitionAction_EndAttackBuildingJobs());
             __result.AddTransition(swarmDone);
         }
@@ -249,19 +256,29 @@ namespace TKS_InsectsArentRaiders
 
         public int lastMoved;
 
+        // when the point last moved a cell
+        public int lastAdvanced;
+
+        // when the swarm started looking around at its destination cell; -1 while it's on its way
+        public int arrivedTick = -1;
+
         public override void ExposeData()
         {
             Scribe_Values.Look(ref pos, "pos", IntVec3.Invalid);
             Scribe_Values.Look(ref dest, "dest", IntVec3.Invalid);
             Scribe_Values.Look(ref lastMoved, "lastMoved", 0);
+            Scribe_Values.Look(ref lastAdvanced, "lastAdvanced", 0);
+            Scribe_Values.Look(ref arrivedTick, "arrivedTick", -1);
         }
     }
 
     // Swarm built on the pattern of vanilla's LordToil_EntitySwarm (shambler swarms): a point moves along a path and the
     // insects follow it, fighting what they see within SwarmRadius of it. Unlike the shambler version, insects stay in
     // the lord when they pick a target or can't reach the point, and unspawned or downed insects are skipped.
-    // The point heads for the closest enemy pawn the swarm can see; with none, a raid-style swarm heads for a colonist or
-    // colony building and a hive swarm ends (MemoNoTarget). It stops in front of walls and closed doors; the insects
+    // The point heads for a cell: where the attacker stood, or the closest enemy pawn the swarm can see. Once it gets
+    // there (or makes no progress for StuckTicks) the swarm looks again from there: a seen enemy gives it a new cell; with
+    // none, a raid-style swarm heads for a colonist or colony building, and a hive swarm searches for SearchTicks after
+    // its insects catch up, then ends (MemoNoTarget). The point stops in front of walls and closed doors; the insects
     // attack buildings around them now and then (JobGiver_InsectSwarmAttackBuilding) until the way is open.
     public class LordToil_InsectSwarm : LordToil
     {
@@ -271,13 +288,22 @@ namespace TKS_InsectsArentRaiders
         public const float SwarmRadius = 12f;
 
         // insects farther than this from the point move back toward it (vanilla shambler swarms use 7)
-        private const float FollowRadius = 7f;
+        public const float FollowRadius = 7f;
 
         // 1.5 cells per second
         private const int MoveInterval = 40;
 
         // with nowhere to go, look again after this long
         private const int RetargetDelay = 250;
+
+        // a hive swarm looks around its destination cell this long before going home
+        private const int SearchTicks = 600;
+
+        // a point that hasn't moved for this long counts as arrived
+        private const int StuckTicks = 5000;
+
+        // a hive swarm goes home after this long without any of its insects harmed (one in-game hour)
+        public const int QuietTicks = GenDate.TicksPerHour;
 
         private bool endWhenNoTarget;
 
@@ -304,6 +330,8 @@ namespace TKS_InsectsArentRaiders
             bool provoked = attacker != null && HarmCause.lastSeenAttackerTick == Find.TickManager.TicksGame && attacker.Spawned && attacker.Map == lord.Map;
             Data.dest = provoked ? attacker.Position : FindDestination();
             Data.lastMoved = Find.TickManager.TicksGame;
+            Data.lastAdvanced = Find.TickManager.TicksGame;
+            Data.arrivedTick = -1;
         }
 
         public override void UpdateAllDuties()
@@ -348,11 +376,19 @@ namespace TKS_InsectsArentRaiders
             }
             // the fight job giver leashes to focusSecond
             pawn.mindState.duty.focusSecond = Data.pos;
-            if (pawn.Position.InHorDistOf(Data.pos, FollowRadius) || pawn.pather.Moving)
+            if (pawn.pather.Moving)
             {
                 return;
             }
-            if (CellFinder.TryFindRandomReachableCellNearPosition(pawn.Position, Data.pos, lord.Map, FollowRadius, TraverseParms.For(pawn), c => c.Standable(lord.Map), null, out IntVec3 cell))
+            // a cell the insect can't get to (behind a wall or embrasure) would leave it standing still
+            LocalTargetInfo focus = pawn.mindState.duty.focus;
+            if (focus.IsValid && focus.Cell.InHorDistOf(Data.pos, FollowRadius) && pawn.CanReach(focus, PathEndMode.OnCell, Danger.Deadly))
+            {
+                return;
+            }
+            TraverseParms traverseParms = TraverseParms.For(pawn);
+            if (CellFinder.TryFindRandomReachableCellNearPosition(pawn.Position, Data.pos, lord.Map, FollowRadius, traverseParms, c => c.Standable(lord.Map), null, out IntVec3 cell)
+                || CellFinder.TryFindRandomReachableCellNearPosition(pawn.Position, Data.pos, lord.Map, SwarmRadius, traverseParms, c => c.Standable(lord.Map), null, out cell))
             {
                 pawn.mindState.duty.focus = cell;
             }
@@ -368,25 +404,44 @@ namespace TKS_InsectsArentRaiders
                     return;
                 }
             }
+            int ticksGame = Find.TickManager.TicksGame;
             // after loading the path is gone; find it again to the saved destination
-            if (path == null && Data.dest.IsValid)
+            if (path == null && Data.dest.IsValid && Data.arrivedTick < 0)
             {
                 FindPath();
             }
-            if (path == null || path.NodesLeftCount <= 1)
+            bool stuck = ticksGame >= Data.lastAdvanced + StuckTicks;
+            if (path == null || path.NodesLeftCount <= 1 || stuck)
             {
+                ReleasePath();
+                // the search starts once an insect has caught up with the point
+                if (Data.arrivedTick < 0)
+                {
+                    if (!stuck && !lord.ownedPawns.Any(p => p.Spawned && p.Position.InHorDistOf(Data.pos, FollowRadius)))
+                    {
+                        return;
+                    }
+                    Data.arrivedTick = ticksGame;
+                }
                 Data.dest = FindDestination();
                 FindPath();
                 if (path == null)
                 {
-                    if (endWhenNoTarget)
+                    if (!endWhenNoTarget)
+                    {
+                        Data.lastMoved = ticksGame + RetargetDelay;
+                    }
+                    else if (ticksGame >= Data.arrivedTick + SearchTicks)
                     {
                         lord.ReceiveMemo(MemoNoTarget);
                     }
-                    else
-                    {
-                        Data.lastMoved = Find.TickManager.TicksGame + RetargetDelay;
-                    }
+                    return;
+                }
+                Data.arrivedTick = -1;
+                Data.lastAdvanced = ticksGame;
+                // already standing on the new destination
+                if (path.NodesLeftCount <= 1)
+                {
                     return;
                 }
             }
@@ -402,6 +457,7 @@ namespace TKS_InsectsArentRaiders
                 return;
             }
             Data.pos = path.ConsumeNextNode();
+            Data.lastAdvanced = ticksGame;
         }
 
         private void FindPath()
@@ -497,6 +553,30 @@ namespace TKS_InsectsArentRaiders
         }
     }
 
+    // Goes to the duty's cell near the point when the insect has fallen behind it. Vanilla's JobGiver_GotoTravelDestination
+    // (without wanderOnArrival) and JobGiver_Wander flip the same nextMoveOrderIsWait toggle, so together they only ever
+    // gave the insect wait jobs.
+    public class JobGiver_InsectSwarmFollow : ThinkNode_JobGiver
+    {
+        private const int ExpiryInterval = 250;
+
+        protected override Job TryGiveJob(Pawn pawn)
+        {
+            PawnDuty duty = pawn.mindState.duty;
+            if (!duty.focus.IsValid || !duty.focusSecond.IsValid || pawn.Position == duty.focus.Cell
+                || pawn.Position.InHorDistOf(duty.focusSecond.Cell, LordToil_InsectSwarm.FollowRadius)
+                || !pawn.CanReach(duty.focus, PathEndMode.OnCell, Danger.Deadly))
+            {
+                return null;
+            }
+            Job job = JobMaker.MakeJob(JobDefOf.Goto, duty.focus);
+            job.locomotionUrgency = LocomotionUrgency.Jog;
+            job.expiryInterval = ExpiryInterval;
+            job.checkOverrideOnExpire = true;
+            return job;
+        }
+    }
+
     // fights within the swarm's radius of its point
     public class JobGiver_InsectSwarmFight : JobGiver_AIFightEnemies
     {
@@ -509,6 +589,13 @@ namespace TKS_InsectsArentRaiders
         protected override float GetFlagRadius(Pawn pawn)
         {
             return pawn.mindState.duty.radius;
+        }
+
+        // Only enemies the insect can get to: one seen through an embrasure or a gap in a wall would hold the insect in
+        // place instead of letting it follow the point.
+        protected override bool ExtraTargetValidator(Pawn pawn, Thing target)
+        {
+            return base.ExtraTargetValidator(pawn, target) && pawn.CanReach(target, PathEndMode.Touch, Danger.Deadly);
         }
     }
 
@@ -831,6 +918,10 @@ namespace TKS_InsectsArentRaiders
                     record.hiveCell = hive.Position;
                     record.releaseTick = -1;
                 }
+                else if (!record.hiveCell.IsValid)
+                {
+                    JoinClosestHiveLord(lord);
+                }
                 else if (record.releaseTick < 0)
                 {
                     record.releaseTick = ticksGame + HiveLordUtility.ReleaseDelayTicks.RandomInRange;
@@ -857,6 +948,56 @@ namespace TKS_InsectsArentRaiders
                 }
             }
             Messages.Message("TKSInsectsArentRaidersReleased".Translate(), new LookTargets(pawns.Where(p => p.Spawned)), MessageTypeDefOf.NeutralEvent);
+        }
+
+        // A hive lord that never had a hive: VFE Insectoids 2 gives every insect hatched from a swarmling cocoon, and every
+        // swarmling its queens spawn, a hive lord of its own, and only finds them a hive within 30 cells. Move them into
+        // the lord of the closest hive on the map, assigned to that hive; with no hive on the map they go wild.
+        private void JoinClosestHiveLord(Lord lord)
+        {
+            List<Pawn> pawns = lord.ownedPawns.ToList();
+            Pawn first = pawns.Find(p => p.Spawned);
+            if (first == null)
+            {
+                return;
+            }
+            Lord bestLord = null;
+            Hive bestHive = null;
+            float bestDist = float.MaxValue;
+            foreach (Lord other in map.lordManager.lords)
+            {
+                if (other == lord || other.faction != lord.faction || !HiveLordUtility.IsManagedHiveLord(other))
+                {
+                    continue;
+                }
+                foreach (Hive hive in HiveLordUtility.SpawnedHives(other))
+                {
+                    float dist = hive.Position.DistanceToSquared(first.Position);
+                    if (dist < bestDist)
+                    {
+                        bestLord = other;
+                        bestHive = hive;
+                        bestDist = dist;
+                    }
+                }
+            }
+            foreach (Pawn pawn in pawns)
+            {
+                lord.RemovePawn(pawn);
+                if (bestLord == null)
+                {
+                    pawn.SetFaction(null);
+                    continue;
+                }
+                foreach (LordToil toil in bestLord.Graph.lordToils)
+                {
+                    if (toil.data is LordToil_HiveRelatedData data)
+                    {
+                        data.assignedHives[pawn] = bestHive;
+                    }
+                }
+                bestLord.AddPawn(pawn);
+            }
         }
 
         private HiveLordRecord RecordFor(Lord lord)

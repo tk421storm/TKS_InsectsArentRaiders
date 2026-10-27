@@ -53,8 +53,10 @@ The mod:
   hive destroyed) and the same "end all jobs" action as vanilla's. The hot-air memo isn't on it, since hot air never has an
   attacker. The swarm starts out heading for that attacker;
 - appends a transition from the swarm back to calm defense, so the insects go home, when the swarm has no target left or
-  after 1200 ticks with no harm or hive memos (vanilla's rule for leaving the assault), ending attack-building jobs as
-  vanilla's does.
+  after one in-game hour (2500 ticks) in which none of its insects was harmed and no hive memo came, ending attack-building
+  jobs as vanilla's does. This is vanilla's rule for leaving the assault (`Trigger_TicksPassedWithoutHarmOrMemos`) with a
+  longer time: vanilla's 1200 ticks ended swarms on their way to a far attacker. Any harm to the insects resets it, from
+  anyone; the insects' own attacks don't. It restarts each time the swarm starts.
 
 Transitions are checked in order and the first match wins, so a signal caused by a seen player attacker passes through 0
 (filtered out) and 1 and 2 (never) to the new one; anything else is caught by 0 in calm defense and ignored in aggressive
@@ -78,26 +80,32 @@ swarm and moves one path cell every 40 ticks (1.5 cells per second; shamblers 0.
 cells of it. Its path ignores walls and doors (`PassAllDestroyableThings`), but the point itself stops in front of a cell
 it can't walk into or a closed door.
 
-Every tick one insect, in turn, is checked: one more than 7 cells from the point that isn't moving gets a new reachable
-cell within 7 cells of the point to go to. Unlike the shambler toil, insects stay in the lord when they pick a target or
+Every tick one insect, in turn, is checked: one that isn't moving and whose cell to go to is more than 7 cells from the
+point, or one it can't reach (behind a wall or embrasure), gets a new reachable cell within 7 cells of the point (12 if there
+is none). Unlike the shambler toil, insects stay in the lord when they pick a target or
 can't reach the point, and unspawned or downed insects are skipped.
 
 Duty `TKS_InsectSwarm` (`Defs/DutyDefs/Duties_InsectSwarm.xml`), in order:
 
 1. `JobGiver_InsectSwarmFight`: vanilla's `JobGiver_AIFightEnemies`, leashed to the point: targets within 12 cells of the
-   point, found within 20 cells of the insect (kept to 25), line of sight needed, targets out of sight are dropped.
+   point, found within 20 cells of the insect (kept to 25), line of sight needed, targets out of sight are dropped. Only
+   targets the insect can reach: one seen through an embrasure would otherwise hold it in place.
 2. `JobGiver_InsectSwarmAttackBuilding`: with a 15% chance each time the insect looks for something to do, attacks a random
    building of an enemy within 3 cells (`TrashUtility.ShouldTrashBuilding` with `attackAllInert`, so walls and doors count).
    The job expires after vanilla's trash interval even without enemies around, so insects pick at the walls they are stuck
    behind instead of breaching them in a focused way.
 3. `JobGiver_GetFood`, so a long-lived swarm doesn't starve.
-4. Go to the cell near the point (`JobGiver_GotoTravelDestination`, jogging).
+4. `JobGiver_InsectSwarmFollow`: an insect more than 7 cells from the point jogs to its cell near the point (the job
+   expires after 250 ticks so it looks for targets on the way). Vanilla's `JobGiver_GotoTravelDestination` can't be used
+   here: it and `JobGiver_Wander` flip the same move/wait toggle, so together they only ever gave wait jobs.
 5. Wander within 5 cells of it (`JobGiver_WanderNearDutyLocation`, jogging).
 
-When the point reaches its destination, or there is no path, it picks the closest enemy pawn any of the swarm's insects
-can see (50 cells, line of sight). With none:
+The point heads for a fixed cell: where the attacker stood when the swarm started, or where a seen enemy was. Once it is
+there and an insect has caught up (within 7 cells), or once it hasn't moved for 5000 ticks, it picks the closest enemy pawn
+any of the swarm's insects can see (50 cells, line of sight) and heads for that pawn's cell. With none:
 
-- a **hive swarm** sends `TKS_InsectSwarmNoTarget`, and the hive lord returns to calm defense (section 1);
+- a **hive swarm** keeps looking for 600 ticks, then sends `TKS_InsectSwarmNoTarget`, and the hive lord returns to calm
+  defense (section 1);
 - a **raid-style swarm** heads for a random colonist on the map, or a random colony building, and looks again every 250
   ticks if there are neither. It goes on for as long as it has insects.
 
@@ -140,6 +148,13 @@ the vanilla `Insect` think tree: they fight enemies within 30 cells, hunt and ea
 starving, and leave at random (60-day MTB).
 
 The last hive position and release time are saved with the map.
+
+A hive lord that never had a hive isn't released this way. Vanilla Factions Expanded - Insectoids 2 makes one per insect
+for the insects its swarmling cocoons hatch (`VFEInsectoids.Cocoon`) and the swarmlings its queens spawn
+(`CompSpawnSwarmlings`), and only finds them a hive within 30 cells (`LordToil_HiveRelated.FindClosestHive`), so insects
+hatched farther out wandered and starved. The hourly check moves these insects into the lord of the closest hive on the map
+and assigns them to that hive in its toil data, so they get its calm defense duty. With no hive on the map they go wild,
+without the message.
 
 ### 5. Cocoon insects spawn wild instead of with a raid lord
 
