@@ -553,6 +553,32 @@ namespace TKS_InsectsArentRaiders
         }
     }
 
+    // Hive patrol (DefendHiveAggressively): a random reachable cell up to patrolRadius from the hive. Vanilla's wander
+    // finder warns on every call above 12 cells ("greater than Region.GridSize"), so it's only the fallback here.
+    public class JobGiver_InsectPatrolHive : JobGiver_WanderHive
+    {
+        public float patrolRadius = 35f;
+
+        public override ThinkNode DeepCopy(bool resolve = true)
+        {
+            JobGiver_InsectPatrolHive obj = (JobGiver_InsectPatrolHive)base.DeepCopy(resolve);
+            obj.patrolRadius = patrolRadius;
+            return obj;
+        }
+
+        protected override IntVec3 GetExactWanderDest(Pawn pawn)
+        {
+            IntVec3 root = GetWanderRoot(pawn);
+            if (CellFinder.TryFindRandomCellNear(root, pawn.Map, (int)patrolRadius,
+                c => c.Standable(pawn.Map) && !c.IsForbidden(pawn) && pawn.CanReach(c, PathEndMode.OnCell, Danger.Deadly), out IntVec3 dest))
+            {
+                return dest;
+            }
+            // vanilla's 7.5 cells
+            return base.GetExactWanderDest(pawn);
+        }
+    }
+
     // Goes to the duty's cell near the point when the insect has fallen behind it. Vanilla's JobGiver_GotoTravelDestination
     // (without wanderOnArrival) and JobGiver_Wander flip the same nextMoveOrderIsWait toggle, so together they only ever
     // gave the insect wait jobs.

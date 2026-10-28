@@ -125,8 +125,10 @@ the swarm duty count as an active threat too, as assaulting ones do in vanilla.
 
 ### 3. Aggressive defense patrols wider and faster
 
-`Patches/DutyDefs.xml` sets the `JobGiver_WanderHive` node of the `DefendHiveAggressively` duty to `wanderRadius` 35
-(vanilla 7.5; the leash is 40) and `locomotionUrgency` `Jog`. Wandering defaults to `Walk`, which halves movement speed in
+`Patches/DutyDefs.xml` replaces the `JobGiver_WanderHive` node of the `DefendHiveAggressively` duty with
+`JobGiver_InsectPatrolHive`, with `patrolRadius` 35 (vanilla 7.5; the leash is 40) and `locomotionUrgency` `Jog`. It picks
+a random reachable cell within 35 cells of the hive itself: vanilla's wander finder (`RCellFinder.RandomWanderDestFor`)
+logs "greater than Region.GridSize" on every call above 12 cells. With no cell found it falls back to vanilla's 7.5. Wandering defaults to `Walk`, which halves movement speed in
 `Pawn_PathFollower`; `Jog` is full speed. Attack jobs already jog, so insects now patrol at the speed they charge. Calm
 hives still walk within 7.5 cells. Insects running patrols across the area is also how the player can tell a hive is
 defending itself aggressively.
